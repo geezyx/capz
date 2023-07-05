@@ -15,32 +15,43 @@ const (
 )
 
 func main() {
-	latitude, longitude, radii, outputFile := os.Args[1], os.Args[2], os.Args[3], os.Args[4]
-	tempCSVPath, err := generateCAPSData(latitude, longitude, radii)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	err = downloadCSV(tempCSVPath, outputFile)
+	latitude, longitude, radii, outputFilePrefix := os.Args[1], os.Args[2], os.Args[3], os.Args[4]
+	err := downloadCAPSData(latitude, longitude, radii, outputFilePrefix)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
-func generateCAPSData(latitude, longitude, radii string) (string, error) {
-	doc, err := submitCAPSRequest(latitude, longitude, radii)
+func downloadCAPSData(latitude, longitude, radii, outputFilePrefix string) error {
+	acsResponse, err := submitCAPSACSRequest(latitude, longitude, radii)
 	if err != nil {
-		return "", err
+		return err
 	}
-	tempCSVPath := extractGeneratedCSVPath(doc)
-	if tempCSVPath == "" {
-		return "", fmt.Errorf("response did not contain expected temporary CSV link")
+	acsCSVPath := extractGeneratedCSVPath(acsResponse)
+	if acsCSVPath == "" {
+		return fmt.Errorf("ACS response did not contain expected temporary CSV link")
 	}
-	return tempCSVPath, nil
+	censusResponse, err := submitCAPS2010Request(latitude, longitude, radii)
+	if err != nil {
+		return err
+	}
+	censusCSVPath := extractGeneratedCSVPath(censusResponse)
+	if acsCSVPath == "" {
+		return fmt.Errorf("census response did not contain expected temporary CSV link")
+	}
+	err = downloadCSV(acsCSVPath, outputFilePrefix+"_ACS.csv")
+	if err != nil {
+		return err
+	}
+	err = downloadCSV(censusCSVPath, outputFilePrefix+"_2010.csv")
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func submitCAPSRequest(latitude, longitude, radii string) (*html.Node, error) {
+func submitCAPSACSRequest(latitude, longitude, radii string) (*html.Node, error) {
 	resource := "/cgi-bin/broker"
 	params := url.Values{}
 	params.Add("_PROGRAM", "apps.capsACS.sas")
@@ -62,7 +73,32 @@ func submitCAPSRequest(latitude, longitude, radii string) (*html.Node, error) {
 
 	resp, err := http.Get(urlStr)
 	if err != nil {
-		return nil, fmt.Errorf("submitting CAPs request: %w", err)
+		return nil, fmt.Errorf("submitting CAPS ACS request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	return html.Parse(resp.Body)
+}
+
+func submitCAPS2010Request(latitude, longitude, radii string) (*html.Node, error) {
+	resource := "/cgi-bin/broker"
+	params := url.Values{}
+	params.Add("_PROGRAM", "apps.caps2010.sas")
+	params.Add("debug", "")
+	params.Add("latitude", latitude)
+	params.Add("longitude", longitude)
+	params.Add("radii", radii)
+	params.Add("sitename", "")
+	params.Add("units", " ")
+
+	u, _ := url.ParseRequestURI(baseURL)
+	u.Path = resource
+	u.RawQuery = params.Encode()
+	urlStr := fmt.Sprintf("%v", u)
+
+	resp, err := http.Get(urlStr)
+	if err != nil {
+		return nil, fmt.Errorf("submitting CAPS 2010 request: %w", err)
 	}
 	defer resp.Body.Close()
 
